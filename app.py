@@ -30,6 +30,21 @@ PALETA = [AZUL, GRIS, AZUL_CLARO, "#374151", GRIS_CLARO, "#17324F", "#9CA3AF", "
 px.defaults.color_discrete_sequence = PALETA
 px.defaults.color_continuous_scale = "Blues"
 
+# Mapeo de color fijo para el gráfico de estacionalidad (Pregunta 4, 6 fuentes
+# a la vez). Con la asignación automática por orden alfabético, "SOLAR" y
+# "EOLICO" quedaban con dos tonos casi negros indistinguibles entre sí, e
+# "HIDRO <=50MW" con un gris casi blanco que se perdía contra el fondo. Acá
+# se elige a mano un color por fuente, bien separado en claridad dentro de
+# la misma familia azul/gris, para que ninguna línea quede invisible.
+COLOR_FUENTE_Q4 = {
+    "SOLAR": "#17324F",
+    "HIDRO <=50MW": "#2E5C8A",
+    "BIOMASA": "#5B7FA6",
+    "BIODIESEL": "#6B7280",
+    "EOLICO": "#8AA4C2",
+    "BIOGAS": "#9CA3AF",
+}
+
 ALUMNOS = "Lucas Emiliano Galleguillo (2510484), Ignacio Albizuri (2520657), Santiago Descalzo Glamuzina (2500352), Joaquin Ian Garcia Sequeira (2534906)"
 PROFESORES = "Julio Marcelo Gutierrez, Gaston Emilio Severina"
 
@@ -178,6 +193,27 @@ with tab2:
         "dos son cocientes (no aditivos) y el tercero es un conteo de centrales distintas que "
         "depende del primer año con generación de cada central. Ninguno se almacena como columna "
         "del hecho — todos se calculan a partir de la única medida almacenada, ENERGÍA GENERADA [GWh]."
+    )
+
+    st.subheader("b) Tabla de correspondencias")
+    correspondencias = pd.DataFrame([
+        ("Provincia", "PROVINCIA"),
+        ("Región", "REGIÓN"),
+        ("Fuentes de Energía Renovable", "FUENTE DE ENERGÍA"),
+        ("Tiempo (Año, Mes y Estación)", "AÑO, MES (la estación se deriva de MES, no existe como columna propia)"),
+        ("Central", "CENTRAL, CENTRAL DESCRIPCIÓN"),
+        ("Máquina", "MAQUINA"),
+        ("Programa / Contrato", "Nueva Generación"),
+        ("Energía generada (hecho)", "ENERGÍA GENERADA [GWh]"),
+        ("Indicador: Suma Total de Energía Generada", "ENERGÍA GENERADA [GWh]"),
+        ("Indicador: % Variación de la Generación entre Años", "ENERGÍA GENERADA [GWh], AÑO"),
+        ("Indicador: % Participación sobre el Total Generado", "ENERGÍA GENERADA [GWh] y la columna de la perspectiva por la que se reparte"),
+        ("Indicador: Cantidad de Centrales Nuevas", "CENTRAL, MES, ENERGÍA GENERADA [GWh]"),
+    ], columns=["Perspectiva / Indicador", "Columna(s) real(es) del archivo"])
+    st.dataframe(correspondencias, use_container_width=True, hide_index=True)
+    st.caption(
+        "Confirma que cada perspectiva e indicador planteado en el Paso 1 tiene de dónde salir "
+        "en el archivo real — ninguno quedó sin columna de origen."
     )
 
     st.subheader("c) Nivel de granularidad")
@@ -793,6 +829,7 @@ ORDER BY v.gwh_acumulado DESC;""",
             df4 = df4.copy()
             df4["mes_nombre"] = df4["mes"].map(MESES)
             fig = px.line(df4, x="mes", y="pct_del_anio", color="nombre_fuente", markers=True,
+                          color_discrete_map=COLOR_FUENTE_Q4,
                           labels={"mes": "Mes", "pct_del_anio": "% de la generación anual", "nombre_fuente": "Fuente"})
             fig.update_xaxes(tickmode="array", tickvals=list(MESES.keys()), ticktext=list(MESES.values()))
             fig.add_hline(y=100 / 12, line_dash="dash", annotation_text="reparto parejo (8,33%)")
