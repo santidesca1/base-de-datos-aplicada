@@ -357,10 +357,25 @@ generación de una central, quedan fuera del grano, van a `stg_descartes`),
 **deduplicación** de las 5 combinaciones repetidas quedándose con el valor más alto,
 nombre único para BRC1, y se derivan año/mes/estación de la fecha.
 
-**4. Load:** primero se cargan las 7 dimensiones (generan sus claves subrogadas), y
-después, cruzando (`merge`) los datos limpios contra cada dimensión, se arma y carga
-`fact_generacion`. Se usa `if_exists="append"` (no `"replace"`) para que MySQL conserve
-las PK, FK y CHECK del Paso 3 y controle la integridad al insertar.
+**4. Load:** la carga se hace en dos etapas, dimensiones primero y hecho después, porque
+el hecho necesita las claves que generan las dimensiones.
+
+- **Dimensiones.** Cada tabla de dimensión se carga con los valores únicos de los datos
+  ya limpios, ordenados por su código o nombre, y la clave nueva la genera MySQL
+  (`AUTO_INCREMENT`). El notebook lee esas claves recién generadas para poder usarlas en
+  el paso siguiente.
+- **Hechos.** Cada fila de generación ya limpia se cruza (`merge`) con las 7 dimensiones
+  por su valor natural — fecha, código de central, código de máquina, fuente, región,
+  provincia y programa — para traducir esos valores a las 7 claves subrogadas. Antes de
+  insertar se verifica que **ninguna fila quedó sin resolver** (0 filas sin alguna de las
+  7 claves) y que el cruce no multiplicó ni perdió filas en el camino.
+- **Nota técnica:** el ejemplo de clase usa `to_sql(..., if_exists="replace")`, pero acá
+  se usa `if_exists="append"` para las tablas del modelo. `"replace"` borra la tabla y la
+  vuelve a crear **sin** las PK, FK ni CHECK definidas en el Paso 3 — con `"append"`,
+  en cambio, esas restricciones siguen activas y MySQL controla la integridad en cada
+  inserción (grano por la clave primaria, claves foráneas válidas, energía no negativa).
+  `"replace"` se usa solo en las tablas intermedias (`stg_*`), que no tienen ese problema
+  porque no son parte del modelo lógico.
 
 **5. Verificación:** se concilia que cada fila del archivo original haya terminado en el
 hecho o en los descartes (sin perderse ni duplicarse), y se recalculan los totales de
@@ -407,6 +422,77 @@ forma **independiente** desde el CSV para contrastarlos contra lo cargado.
             ("8011 / 8109", "GUA8HI / GUA8HI", "2020-10", "0 y 0,393016", "Se conserva 0,393016"),
         ], columns=["Línea CSV", "Central / Máquina", "Mes", "Energía (GWh)", "Resultado"])
         st.dataframe(dups, use_container_width=True, hide_index=True)
+
+    with st.expander("Ver la verificación de la carga (punto 5), con las tablas completas"):
+        st.markdown("**Conteos de filas** contra las cifras de control del Paso 3:")
+        conteos = pd.DataFrame([
+            ("dim_tiempo", 187, 187, "✅"),
+            ("dim_central", 281, 281, "✅"),
+            ("dim_maquina", 289, 289, "✅"),
+            ("dim_fuente_energia", 6, 6, "✅"),
+            ("dim_region", 9, 9, "✅"),
+            ("dim_provincia", 21, 21, "✅"),
+            ("dim_programa", 7, 7, "✅"),
+            ("fact_generacion", 22592, 22592, "✅"),
+        ], columns=["Tabla", "Filas en el DW", "Esperado (Paso 3)", "Resultado"])
+        st.dataframe(conteos, use_container_width=True, hide_index=True)
+
+        st.markdown(
+            "**Conciliación de filas:** cada fila del archivo terminó en el hecho o en la "
+            "tabla de descartes; no se perdió ni se duplicó ninguna."
+        )
+        conciliacion = pd.DataFrame([
+            ("Filas del archivo original", "22.784"),
+            ("Cargadas en fact_generacion", "22.592"),
+            ("Descartadas: \"Demanda MEM\", fuera del grano (stg_descartes)", "187"),
+            ("Descartadas: duplicados (stg_descartes)", "5"),
+            ("Diferencia", "0"),
+        ], columns=["Concepto", "Filas"])
+        st.dataframe(conciliacion, use_container_width=True, hide_index=True)
+
+        st.markdown(
+            "**Totales del DW vs. archivo original.** Para que la comparación sea "
+            "independiente del proceso de carga, el notebook vuelve a leer el CSV desde el "
+            "disco y calcula los totales aplicando las mismas reglas (excluir \"Demanda MEM\" "
+            "y deduplicar quedándose con el mayor)."
+        )
+        totales = pd.DataFrame([
+            ("Energía generada (GWh)", "163.315,980622", "163.315,980622", "0"),
+        ], columns=["Medida", "Archivo original", "Data warehouse", "Diferencia"])
+        st.dataframe(totales, use_container_width=True, hide_index=True)
+        st.caption(
+            "Desglose: el archivo suma 163.324,548846 GWh sin deduplicar. Se descartan "
+            "8,568224 GWh de filas duplicadas (8,081923 del duplicado exacto de CASAEO y "
+            "0,486301 de CHN2EO; los tres GUA aportan 0), y el resultado — 163.315,980622 "
+            "GWh — es el total del DW. Como el DW guarda 6 decimales y el archivo trae "
+            "algunos valores con ruido de punto flotante más allá del sexto decimal (la "
+            "mayor diferencia al redondear es de 4,6e-7 GWh), la comparación se hace con "
+            "una tolerancia de 0,00001 GWh; la diferencia real es 0 al sexto decimal."
+        )
+
+        st.markdown("**Totales por fuente** (control secundario, coincide con la tabla del Paso 3):")
+        por_fuente = pd.DataFrame([
+            ("EOLICO", "105.689,950006", "105.689,950006", "0"),
+            ("SOLAR", "23.077,243376", "23.077,243376", "0"),
+            ("HIDRO <=50MW", "21.754,940682", "21.754,940682", "0"),
+            ("BIOMASA", "6.690,875892", "6.690,875892", "0"),
+            ("BIOGAS", "3.722,356075", "3.722,356075", "0"),
+            ("BIODIESEL", "2.380,614591", "2.380,614591", "0"),
+        ], columns=["Fuente", "Archivo (GWh)", "DW (GWh)", "Diferencia"])
+        st.dataframe(por_fuente, use_container_width=True, hide_index=True)
+
+        st.markdown("""
+**Integridad.** Las claves foráneas, la clave primaria del grano y la restricción de
+energía no negativa están definidas en el modelo del Paso 3, así que MySQL las controla
+en cada inserción: si un hecho apuntara a una dimensión inexistente o repitiera el
+grano, la carga fallaría. Además, el notebook comprueba antes de insertar que ninguna
+fila quedó sin clave resuelta (0 filas) y que el cruce no multiplicó ni perdió filas.
+
+**Controles puntuales:** los 5 casos duplicados quedaron con una única fila en
+`fact_generacion` y con el valor esperado (CASAEO 8,081923; CHN2EO 6,182240;
+GUA6HI 0,378157; GUA7HI 0,280297; GUA8HI 0,393016).
+""")
+        st.success("Resultado: la carga quedó verificada. No se perdieron ni duplicaron datos.")
 
     st.subheader("6. Política de actualización")
     st.markdown("""
