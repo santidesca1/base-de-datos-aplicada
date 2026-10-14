@@ -617,6 +617,73 @@ with tab_dash:
         "ejecutó. Con los filtros en su valor por default (todo el período, todas las regiones y "
         "fuentes) el resultado coincide con el informe `dashboard.md` de la entrega."
     )
+    st.caption(
+        "Dos aclaraciones del informe que valen para todas las preguntas: **2026 es un año "
+        "incompleto** (solo enero-julio), así que las lecturas de `dashboard.md` lo excluyen de "
+        "las comparaciones anuales (P2, P4, P6, P8); y el archivo trae **Buenos Aires repartida "
+        "en dos regiones** (BUENOS AIRES y GRAN BS.AS.), que se respetan tal cual vienen."
+    )
+
+    CONCLUSIONES = {
+        1: {
+            "indicador": "Suma total de energía generada.",
+            "lectura": "Hay 2 centrales nulas (DSUD, HON3FV) y 26 con muy poca generación (hasta "
+                       "3,372 GWh acumulados en todo el período). Entre estas últimas, 13 empezaron "
+                       "a generar en 2024 o después, así que su valor bajo se explica en parte por "
+                       "su corta vida.",
+        },
+        2: {
+            "indicador": "% Variación de la generación entre años (interanual); se muestra también "
+                         "la Suma total anual.",
+            "lectura": "El crecimiento sostenido comienza en 2018: la generación sube 27,2 % y "
+                       "desde ahí no vuelve a caer. El despegue más fuerte es 2019 (+133 %). En "
+                       "2025 se llegó a 26.659 GWh, 10,1 veces el nivel de 2017.",
+        },
+        3: {
+            "indicador": "Suma total de energía generada y % Participación sobre el total generado.",
+            "lectura": "BUENOS AIRES es la mayor productora (44.159 GWh, 27,0 % del total) y "
+                       "FORMOSA la menor (31,54 GWh). Las tres primeras (BUENOS AIRES, CHUBUT, "
+                       "SAN JUAN) suman 59,4 %.",
+        },
+        4: {
+            "indicador": "% Participación sobre el total generado (de cada mes sobre el total "
+                         "anual de la fuente).",
+            "lectura": "Meses de mayor generación: Eólica en Oct (9,02 %); Solar en Dic (10,74 %); "
+                       "Hidro ≤50 MW en Ene (10,48 %); Biomasa en Sep (10,81 %); Biogás en Ago "
+                       "(8,89 %). La Solar tiene un patrón estacional claro (5,06 puntos entre su "
+                       "mejor y su peor mes), mientras que la Eólica es de las fuentes más parejas "
+                       "del año (1,73 puntos). Las más marcadas son Hidro ≤50 MW (5,53 puntos) y "
+                       "Biomasa (5,51 puntos).",
+        },
+        5: {
+            "indicador": "Cantidad de centrales nuevas.",
+            "lectura": "Se sumaron 240 centrales en total. El año con más altas fue 2019 (39), y "
+                       "la región con más altas acumuladas es CUYO (46).",
+        },
+        6: {
+            "indicador": "Suma total de energía generada y % Variación de la generación entre años.",
+            "lectura": "La que más se desarrolló fue la Eólica (+18.081 GWh); la de menor "
+                       "desarrollo, la Hidro ≤50 MW (-446 GWh, retrocedió). En términos "
+                       "porcentuales, la de mayor crecimiento es la Solar (+35.697 %), partiendo "
+                       "de un volumen muy chico en 2016.",
+        },
+        7: {
+            "indicador": "Suma total de energía generada y % Participación sobre el total generado.",
+            "lectura": "La más productiva es PATAGONIA + Eólica con 49.278 GWh (30,2 % de toda la "
+                       "generación). Las 3 primeras combinaciones concentran 61,7 %.",
+        },
+        8: {
+            "indicador": "Suma total de energía generada y % Participación sobre el total generado.",
+            "lectura": "Regiones que lideraron al menos un año: NOROESTE (3 años), GRAN BS.AS. "
+                       "(1 año), PATAGONIA (10 años), BUENOS AIRES (1 año). El liderazgo cambió "
+                       "5 veces en el período.",
+        },
+        9: {
+            "indicador": "Suma total de energía generada.",
+            "lectura": "La central con más energía acumulada de todo el país es SJMTEO (P.EOLICO "
+                       "MATACO 3 PICOS, región BUENOS AIRES) con 5.782 GWh.",
+        },
+    }
 
     # Texto real de cada consulta (la misma que ejecuta queries.py, tal cual —
     # solo se documenta acá para que quede trazable a simple vista). Cuando el
@@ -760,6 +827,7 @@ ORDER BY v.gwh_acumulado DESC;""",
 
     with sub_tabs[0]:
         st.markdown("**1. ¿Qué centrales generaron muy poca o nula energía?**")
+        st.caption(f"Indicador(es) usados: {CONCLUSIONES[1]['indicador']}")
         with st.expander("Ver la consulta SQL"):
             st.code(SQL_QUERIES[1], language="sql")
         n = st.slider("Cantidad de centrales a mostrar", 5, 60, 28, key="n_q1")
@@ -775,9 +843,11 @@ ORDER BY v.gwh_acumulado DESC;""",
             fig.update_layout(height=max(400, 18 * len(df1)))
             st.plotly_chart(fig, use_container_width=True)
             st.dataframe(df1, use_container_width=True, hide_index=True)
+        st.markdown(f"**Lectura (período completo, sin filtrar):** {CONCLUSIONES[1]['lectura']}")
 
     with sub_tabs[1]:
         st.markdown("**2. ¿En qué año las energías renovables comenzaron a crecer?**")
+        st.caption(f"Indicador(es) usados: {CONCLUSIONES[2]['indicador']}")
         with st.expander("Ver la consulta SQL"):
             st.code(SQL_QUERIES[2], language="sql")
         umbral = st.slider("Umbral de crecimiento anual para 'inicio sostenido' (%)", 5, 50, 20, key="umbral_q2")
@@ -799,9 +869,11 @@ ORDER BY v.gwh_acumulado DESC;""",
         else:
             st.warning("Ningún año cumple ese umbral con crecimiento sostenido hasta el final del rango.")
         st.dataframe(df2, use_container_width=True, hide_index=True)
+        st.markdown(f"**Lectura (umbral 20 %, período completo):** {CONCLUSIONES[2]['lectura']}")
 
     with sub_tabs[2]:
         st.markdown("**3. ¿Qué provincias producen la mayor y la menor cantidad de energía renovable?**")
+        st.caption(f"Indicador(es) usados: {CONCLUSIONES[3]['indicador']}")
         with st.expander("Ver la consulta SQL"):
             st.code(SQL_QUERIES[3], language="sql")
         df3 = q.q3_provincias(engine, anio_min, anio_max, regiones=regiones_arg)
@@ -815,9 +887,11 @@ ORDER BY v.gwh_acumulado DESC;""",
             fig.update_layout(height=max(400, 22 * len(df3)))
             st.plotly_chart(fig, use_container_width=True)
             st.dataframe(df3, use_container_width=True, hide_index=True)
+        st.markdown(f"**Lectura (período completo, sin filtrar):** {CONCLUSIONES[3]['lectura']}")
 
     with sub_tabs[3]:
         st.markdown("**4. ¿En qué meses del año generan más las fuentes solar y eólica, frente a hidro y biomasa?**")
+        st.caption(f"Indicador(es) usados: {CONCLUSIONES[4]['indicador']}")
         with st.expander("Ver la consulta SQL"):
             st.code(SQL_QUERIES[4], language="sql")
         df4 = q.q4_estacionalidad(engine, anio_min, anio_max, fuentes=fuentes_arg)
@@ -835,9 +909,11 @@ ORDER BY v.gwh_acumulado DESC;""",
             fig.add_hline(y=100 / 12, line_dash="dash", annotation_text="reparto parejo (8,33%)")
             st.plotly_chart(fig, use_container_width=True)
             st.dataframe(df4, use_container_width=True, hide_index=True)
+        st.markdown(f"**Lectura (2016-2025, años completos, sin filtrar):** {CONCLUSIONES[4]['lectura']}")
 
     with sub_tabs[4]:
         st.markdown("**5. ¿Cuántas centrales nuevas se sumaron cada año, por región?**")
+        st.caption(f"Indicador(es) usados: {CONCLUSIONES[5]['indicador']}")
         with st.expander("Ver la consulta SQL"):
             st.code(SQL_QUERIES[5], language="sql")
         df5 = q.q5_centrales_nuevas(engine, anio_min, anio_max, regiones=regiones_arg)
@@ -849,9 +925,11 @@ ORDER BY v.gwh_acumulado DESC;""",
             st.plotly_chart(fig, use_container_width=True)
             st.metric("Total de centrales nuevas en el rango filtrado", int(df5["centrales_nuevas"].sum()))
             st.dataframe(df5, use_container_width=True, hide_index=True)
+        st.markdown(f"**Lectura (período completo, sin filtrar):** {CONCLUSIONES[5]['lectura']}")
 
     with sub_tabs[5]:
         st.markdown("**6. ¿Qué formas de energía se desarrollaron más y cuáles menos entre dos años?**")
+        st.caption(f"Indicador(es) usados: {CONCLUSIONES[6]['indicador']}")
         with st.expander("Ver la consulta SQL"):
             st.code(SQL_QUERIES[6], language="sql")
         c1, c2 = st.columns(2)
@@ -864,9 +942,11 @@ ORDER BY v.gwh_acumulado DESC;""",
         fig.update_layout(barmode="group", xaxis_title="Fuente", yaxis_title="GWh en el año")
         st.plotly_chart(fig, use_container_width=True)
         st.dataframe(df6, use_container_width=True, hide_index=True)
+        st.markdown(f"**Lectura (2016 vs. 2025, los valores por default):** {CONCLUSIONES[6]['lectura']}")
 
     with sub_tabs[6]:
         st.markdown("**7. ¿Qué combinación región + fuente es la más productiva?**")
+        st.caption(f"Indicador(es) usados: {CONCLUSIONES[7]['indicador']}")
         with st.expander("Ver la consulta SQL"):
             st.code(SQL_QUERIES[7], language="sql")
         top_n = st.slider("Top N combinaciones", 5, 33, 15, key="top_q7")
@@ -881,9 +961,11 @@ ORDER BY v.gwh_acumulado DESC;""",
             fig.update_layout(height=max(400, 24 * len(df7)))
             st.plotly_chart(fig, use_container_width=True)
             st.dataframe(df7, use_container_width=True, hide_index=True)
+        st.markdown(f"**Lectura (período completo, sin filtrar):** {CONCLUSIONES[7]['lectura']}")
 
     with sub_tabs[7]:
         st.markdown("**8. ¿Qué región fue la que más generó en cada año?**")
+        st.caption(f"Indicador(es) usados: {CONCLUSIONES[8]['indicador']}")
         with st.expander("Ver la consulta SQL"):
             st.code(SQL_QUERIES[8], language="sql")
         df8 = q.q8_region_lider_por_anio(engine, anio_min, min(anio_max, 2025))
@@ -894,9 +976,11 @@ ORDER BY v.gwh_acumulado DESC;""",
                         labels={"anio": "Año", "gwh": "GWh de la región líder", "region_lider": "Región líder"})
             st.plotly_chart(fig, use_container_width=True)
             st.dataframe(df8, use_container_width=True, hide_index=True)
+        st.markdown(f"**Lectura (2011-2025, años completos):** {CONCLUSIONES[8]['lectura']}")
 
     with sub_tabs[8]:
         st.markdown("**9. ¿Cuál es la central con mayor energía generada acumulada de cada región?**")
+        st.caption(f"Indicador(es) usados: {CONCLUSIONES[9]['indicador']}")
         with st.expander("Ver la consulta SQL"):
             st.code(SQL_QUERIES[9], language="sql")
         df9 = q.q9_central_lider_por_region(engine, anio_min, anio_max, regiones=regiones_arg)
@@ -910,9 +994,41 @@ ORDER BY v.gwh_acumulado DESC;""",
                         labels={"gwh_acumulado": "GWh acumulados", "etiqueta": "Región (central)"})
             st.plotly_chart(fig, use_container_width=True)
             st.dataframe(df9, use_container_width=True, hide_index=True)
+        st.markdown(f"**Lectura (período completo, sin filtrar):** {CONCLUSIONES[9]['lectura']}")
 
     st.divider()
     st.caption(
         "Cada pestaña vuelve a consultar el modelo estrella con los filtros elegidos — no son "
         "imágenes estáticas. Las consultas son las mismas, verificadas, del dashboard original."
     )
+
+    with st.expander("Ver la verificación de los resultados contra un cálculo independiente"):
+        st.markdown(
+            "Cada uno de los 9 resultados de `dashboard.md` se comparó con un cálculo "
+            "independiente hecho en pandas sobre el CSV original (con la misma regla de "
+            "deduplicación del Paso 2), con una tolerancia de 0,0001 GWh (0,01 puntos "
+            "porcentuales en la pregunta 4)."
+        )
+        verificacion = pd.DataFrame([
+            ("Q1", "Las 28 con menor energía coinciden con pandas (28 centrales)", "✅ coincide"),
+            ("Q1", "No hay empate en el corte (la 28 y la 29 difieren)", "✅ coincide"),
+            ("Q1", "28 = 10 % de 281 redondeado hacia abajo", "✅ coincide"),
+            ("Q1", "Nulas = 2", "✅ coincide"),
+            ("Q2", "Año de inicio coincide con pandas (2018)", "✅ coincide"),
+            ("Q2", "Años que cumplen el criterio = pandas ([2018, 2019, 2020, 2021])", "✅ coincide"),
+            ("Q2", "Totales anuales", "✅ coincide"),
+            ("Q3", "Totales por provincia (21 provincias)", "✅ coincide"),
+            ("Q4", "Índice estacional con máquinas de 12 meses (60 celdas)", "✅ coincide"),
+            ("Q5", "Centrales nuevas por año y región (total 240)", "✅ coincide"),
+            ("Q5", "Total = 240", "✅ coincide"),
+            ("Q6", "2016 vs. 2025 por fuente", "✅ coincide"),
+            ("Q7", "Región + fuente (33 combinaciones)", "✅ coincide"),
+            ("Q8", "Región líder por año", "✅ coincide"),
+            ("Q9", "Central líder por región (9 regiones)", "✅ coincide"),
+        ], columns=["Pregunta", "Control", "Resultado"])
+        st.dataframe(verificacion, use_container_width=True, hide_index=True)
+        st.caption(
+            "Los 15 controles coinciden. `dashboard.md` queda trazable al modelo estrella: mismas "
+            "consultas (acá ejecutadas en vivo) y mismos resultados, confirmados por un cálculo "
+            "hecho con una herramienta distinta (pandas) sobre el archivo original."
+        )
