@@ -489,11 +489,157 @@ with tab_dash:
 
     st.divider()
     st.subheader("Las 9 preguntas de negocio, en vivo contra el modelo estrella")
+    st.caption(
+        "Cada pestaña corre su consulta SQL real contra `fact_generacion` y las 7 dimensiones "
+        "del modelo estrella — podés abrir \"Ver la consulta SQL\" para ver exactamente qué se "
+        "ejecutó. Con los filtros en su valor por default (todo el período, todas las regiones y "
+        "fuentes) el resultado coincide con el informe `dashboard.md` de la entrega."
+    )
+
+    # Texto real de cada consulta (la misma que ejecuta queries.py, tal cual —
+    # solo se documenta acá para que quede trazable a simple vista). Cuando el
+    # viewer elige región(es) o fuente(s) en los filtros de arriba, se agrega
+    # automáticamente una condición "AND ... IN (...)" a esta misma consulta.
+    SQL_QUERIES = {
+        1: """SELECT c.codigo_central, c.nombre_central,
+       CASE WHEN SUM(fg.energia_generada_gwh) = 0 THEN 'Nula' ELSE 'Muy poca' END AS nivel,
+       SUM(fg.energia_generada_gwh) AS gwh_acumulado,
+       MIN(CASE WHEN fg.energia_generada_gwh > 0 THEN t.anio END) AS primer_anio
+FROM fact_generacion fg
+JOIN dim_central c ON c.id_central = fg.id_central
+JOIN dim_tiempo  t ON t.id_tiempo  = fg.id_tiempo
+WHERE t.anio BETWEEN :anio_min AND :anio_max
+GROUP BY c.id_central, c.codigo_central, c.nombre_central
+ORDER BY gwh_acumulado, c.codigo_central
+LIMIT :n;  -- cantidad de centrales a mostrar, elegida arriba""",
+        2: """SELECT a.anio, a.gwh, p.gwh AS gwh_anterior
+FROM (SELECT t.anio, SUM(fg.energia_generada_gwh) AS gwh
+      FROM fact_generacion fg JOIN dim_tiempo t ON t.id_tiempo = fg.id_tiempo
+      WHERE t.anio BETWEEN :anio_min AND :anio_max GROUP BY t.anio) AS a
+LEFT JOIN (SELECT t.anio, SUM(fg.energia_generada_gwh) AS gwh
+           FROM fact_generacion fg JOIN dim_tiempo t ON t.id_tiempo = fg.id_tiempo
+           WHERE t.anio BETWEEN :anio_min AND :anio_max GROUP BY t.anio) AS p
+       ON p.anio = a.anio - 1
+ORDER BY a.anio;
+-- % de variación y "cumple_criterio" (sube >= umbral % y ningún año
+-- posterior baja) se calculan después, en pandas, sobre este resultado.""",
+        3: """SELECT p.nombre_provincia,
+       SUM(fg.energia_generada_gwh) AS gwh_acumulado
+FROM fact_generacion fg
+JOIN dim_provincia p ON p.id_provincia = fg.id_provincia
+JOIN dim_region r    ON r.id_region = fg.id_region
+JOIN dim_tiempo t    ON t.id_tiempo = fg.id_tiempo
+WHERE t.anio BETWEEN :anio_min AND :anio_max
+  -- AND r.nombre_region IN (...)   ← se agrega si filtrás por región
+GROUP BY p.id_provincia, p.nombre_provincia
+ORDER BY gwh_acumulado DESC;
+-- pct_del_total = 100 * gwh_acumulado / SUM(gwh_acumulado), calculado después""",
+        4: """SELECT m.nombre_fuente, m.mes, ROUND(100 * AVG(m.gwh / a.gwh_anio), 2) AS pct_del_anio
+FROM (SELECT f.nombre_fuente, t.anio, t.mes, SUM(fg.energia_generada_gwh) AS gwh
+      FROM fact_generacion fg
+      JOIN dim_tiempo t          ON t.id_tiempo = fg.id_tiempo
+      JOIN dim_fuente_energia f  ON f.id_fuente = fg.id_fuente
+      JOIN (SELECT fg2.id_maquina, t2.anio FROM fact_generacion fg2         -- solo máquinas
+            JOIN dim_tiempo t2 ON t2.id_tiempo = fg2.id_tiempo              -- que reportan los
+            GROUP BY fg2.id_maquina, t2.anio HAVING COUNT(*) = 12) AS mc    -- 12 meses del año
+        ON mc.id_maquina = fg.id_maquina AND mc.anio = t.anio
+      WHERE t.anio BETWEEN :anio_min AND :anio_max
+        -- AND f.nombre_fuente IN (...)   ← se agrega si filtrás por fuente
+      GROUP BY f.nombre_fuente, t.anio, t.mes) AS m
+JOIN (SELECT f.nombre_fuente, t.anio, SUM(fg.energia_generada_gwh) AS gwh_anio
+      FROM fact_generacion fg
+      JOIN dim_tiempo t          ON t.id_tiempo = fg.id_tiempo
+      JOIN dim_fuente_energia f  ON f.id_fuente = fg.id_fuente
+      JOIN (SELECT fg2.id_maquina, t2.anio FROM fact_generacion fg2
+            JOIN dim_tiempo t2 ON t2.id_tiempo = fg2.id_tiempo
+            GROUP BY fg2.id_maquina, t2.anio HAVING COUNT(*) = 12) AS mc
+        ON mc.id_maquina = fg.id_maquina AND mc.anio = t.anio
+      WHERE t.anio BETWEEN :anio_min AND :anio_max
+      GROUP BY f.nombre_fuente, t.anio) AS a
+  ON a.nombre_fuente = m.nombre_fuente AND a.anio = m.anio
+WHERE a.gwh_anio > 0
+GROUP BY m.nombre_fuente, m.mes
+ORDER BY m.nombre_fuente, m.mes;""",
+        5: """SELECT a.anio_alta, r.nombre_region, COUNT(DISTINCT a.id_central) AS centrales_nuevas
+FROM (SELECT fg.id_central, fg.id_region, MIN(t.fecha_mes) AS primer_registro,
+             MIN(CASE WHEN fg.energia_generada_gwh > 0 THEN t.anio END) AS anio_alta
+      FROM fact_generacion fg JOIN dim_tiempo t ON t.id_tiempo = fg.id_tiempo
+      GROUP BY fg.id_central, fg.id_region) AS a
+JOIN dim_region r ON r.id_region = a.id_region
+WHERE a.primer_registro > (SELECT MIN(fecha_mes) FROM dim_tiempo)  -- excluye la base inicial
+  AND a.anio_alta IS NOT NULL                                       -- excluye las que nunca generaron
+  AND a.anio_alta BETWEEN :anio_min AND :anio_max
+  -- AND r.nombre_region IN (...)   ← se agrega si filtrás por región
+GROUP BY a.anio_alta, r.nombre_region
+ORDER BY a.anio_alta, centrales_nuevas DESC;""",
+        6: """SELECT f.nombre_fuente,
+       SUM(CASE WHEN t.anio = :anio_inicio THEN fg.energia_generada_gwh ELSE 0 END) AS gwh_inicio,
+       SUM(CASE WHEN t.anio = :anio_fin    THEN fg.energia_generada_gwh ELSE 0 END) AS gwh_fin,
+       SUM(CASE WHEN t.anio = :anio_fin    THEN fg.energia_generada_gwh ELSE 0 END)
+     - SUM(CASE WHEN t.anio = :anio_inicio THEN fg.energia_generada_gwh ELSE 0 END) AS variacion_gwh
+FROM fact_generacion fg
+JOIN dim_tiempo t          ON t.id_tiempo = fg.id_tiempo
+JOIN dim_fuente_energia f  ON f.id_fuente = fg.id_fuente
+WHERE t.anio IN (:anio_inicio, :anio_fin)
+GROUP BY f.id_fuente, f.nombre_fuente
+ORDER BY variacion_gwh DESC;""",
+        7: """SELECT r.nombre_region, f.nombre_fuente,
+       SUM(fg.energia_generada_gwh) AS gwh_acumulado
+FROM fact_generacion fg
+JOIN dim_region r          ON r.id_region = fg.id_region
+JOIN dim_fuente_energia f  ON f.id_fuente = fg.id_fuente
+JOIN dim_tiempo t          ON t.id_tiempo = fg.id_tiempo
+WHERE t.anio BETWEEN :anio_min AND :anio_max
+  -- AND r.nombre_region IN (...)   ← se agrega si filtrás por región
+  -- AND f.nombre_fuente IN (...)   ← se agrega si filtrás por fuente
+GROUP BY r.id_region, r.nombre_region, f.id_fuente, f.nombre_fuente
+ORDER BY gwh_acumulado DESC
+LIMIT :top_n;  -- top N combinaciones, elegido arriba""",
+        8: """SELECT v.anio, v.nombre_region, v.gwh
+FROM (SELECT t.anio, r.nombre_region, SUM(fg.energia_generada_gwh) AS gwh
+      FROM fact_generacion fg
+      JOIN dim_tiempo t ON t.id_tiempo = fg.id_tiempo
+      JOIN dim_region r ON r.id_region = fg.id_region
+      WHERE t.anio BETWEEN :anio_min AND :anio_max
+      GROUP BY t.anio, r.id_region, r.nombre_region) AS v
+WHERE v.gwh = (SELECT MAX(w.gwh) FROM                      -- la mayor de ese año
+                (SELECT t.anio, r.nombre_region, SUM(fg.energia_generada_gwh) AS gwh
+                 FROM fact_generacion fg
+                 JOIN dim_tiempo t ON t.id_tiempo = fg.id_tiempo
+                 JOIN dim_region r ON r.id_region = fg.id_region
+                 WHERE t.anio BETWEEN :anio_min AND :anio_max
+                 GROUP BY t.anio, r.id_region, r.nombre_region) AS w
+               WHERE w.anio = v.anio)
+ORDER BY v.anio;""",
+        9: """SELECT v.nombre_region, v.codigo_central, v.nombre_central, v.gwh_acumulado
+FROM (SELECT r.nombre_region, c.codigo_central, c.nombre_central,
+             SUM(fg.energia_generada_gwh) AS gwh_acumulado
+      FROM fact_generacion fg
+      JOIN dim_region r  ON r.id_region = fg.id_region
+      JOIN dim_central c ON c.id_central = fg.id_central
+      JOIN dim_tiempo t  ON t.id_tiempo = fg.id_tiempo
+      WHERE t.anio BETWEEN :anio_min AND :anio_max
+      GROUP BY r.id_region, r.nombre_region, c.id_central, c.codigo_central, c.nombre_central) AS v
+-- WHERE v.nombre_region IN (...)   ← se agrega si filtrás por región
+WHERE v.gwh_acumulado = (
+    SELECT MAX(w.gwh_acumulado) FROM                        -- la mayor de su región
+    (SELECT r.nombre_region, c.id_central, SUM(fg.energia_generada_gwh) AS gwh_acumulado
+     FROM fact_generacion fg
+     JOIN dim_region r  ON r.id_region = fg.id_region
+     JOIN dim_central c ON c.id_central = fg.id_central
+     JOIN dim_tiempo t  ON t.id_tiempo = fg.id_tiempo
+     WHERE t.anio BETWEEN :anio_min AND :anio_max
+     GROUP BY r.id_region, c.id_central) AS w
+    WHERE w.nombre_region = v.nombre_region)
+ORDER BY v.gwh_acumulado DESC;""",
+    }
 
     sub_tabs = st.tabs([f"P{i}" for i in range(1, 10)])
 
     with sub_tabs[0]:
         st.markdown("**1. ¿Qué centrales generaron muy poca o nula energía?**")
+        with st.expander("Ver la consulta SQL"):
+            st.code(SQL_QUERIES[1], language="sql")
         n = st.slider("Cantidad de centrales a mostrar", 5, 60, 28, key="n_q1")
         df1 = q.q1_centrales_poca_generacion(engine, anio_min, anio_max, n)
         if df1.empty:
@@ -510,6 +656,8 @@ with tab_dash:
 
     with sub_tabs[1]:
         st.markdown("**2. ¿En qué año las energías renovables comenzaron a crecer?**")
+        with st.expander("Ver la consulta SQL"):
+            st.code(SQL_QUERIES[2], language="sql")
         umbral = st.slider("Umbral de crecimiento anual para 'inicio sostenido' (%)", 5, 50, 20, key="umbral_q2")
         df2 = q.q2_variacion_anual(engine, anio_min, min(anio_max, 2025), umbral_pct=umbral)
         inicio = df2.loc[df2["cumple_criterio"], "anio"].min() if df2["cumple_criterio"].any() else None
@@ -532,6 +680,8 @@ with tab_dash:
 
     with sub_tabs[2]:
         st.markdown("**3. ¿Qué provincias producen la mayor y la menor cantidad de energía renovable?**")
+        with st.expander("Ver la consulta SQL"):
+            st.code(SQL_QUERIES[3], language="sql")
         df3 = q.q3_provincias(engine, anio_min, anio_max, regiones=regiones_arg)
         if df3.empty:
             st.info("No hay datos para esos filtros.")
@@ -546,6 +696,8 @@ with tab_dash:
 
     with sub_tabs[3]:
         st.markdown("**4. ¿En qué meses del año generan más las fuentes solar y eólica, frente a hidro y biomasa?**")
+        with st.expander("Ver la consulta SQL"):
+            st.code(SQL_QUERIES[4], language="sql")
         df4 = q.q4_estacionalidad(engine, anio_min, anio_max, fuentes=fuentes_arg)
         if df4.empty:
             st.info("No hay datos para esos filtros (probá un rango con al menos un año completo).")
@@ -563,6 +715,8 @@ with tab_dash:
 
     with sub_tabs[4]:
         st.markdown("**5. ¿Cuántas centrales nuevas se sumaron cada año, por región?**")
+        with st.expander("Ver la consulta SQL"):
+            st.code(SQL_QUERIES[5], language="sql")
         df5 = q.q5_centrales_nuevas(engine, anio_min, anio_max, regiones=regiones_arg)
         if df5.empty:
             st.info("No hay altas de centrales para esos filtros.")
@@ -575,6 +729,8 @@ with tab_dash:
 
     with sub_tabs[5]:
         st.markdown("**6. ¿Qué formas de energía se desarrollaron más y cuáles menos entre dos años?**")
+        with st.expander("Ver la consulta SQL"):
+            st.code(SQL_QUERIES[6], language="sql")
         c1, c2 = st.columns(2)
         anio_a = c1.number_input("Año base", min_value=q.ANIO_MIN_DATOS, max_value=q.ANIO_MAX_DATOS, value=2016, key="q6_a")
         anio_b = c2.number_input("Año de comparación", min_value=q.ANIO_MIN_DATOS, max_value=q.ANIO_MAX_DATOS, value=2025, key="q6_b")
@@ -588,6 +744,8 @@ with tab_dash:
 
     with sub_tabs[6]:
         st.markdown("**7. ¿Qué combinación región + fuente es la más productiva?**")
+        with st.expander("Ver la consulta SQL"):
+            st.code(SQL_QUERIES[7], language="sql")
         top_n = st.slider("Top N combinaciones", 5, 33, 15, key="top_q7")
         df7 = q.q7_region_fuente(engine, anio_min, anio_max, top_n=top_n, regiones=regiones_arg, fuentes=fuentes_arg)
         if df7.empty:
@@ -603,6 +761,8 @@ with tab_dash:
 
     with sub_tabs[7]:
         st.markdown("**8. ¿Qué región fue la que más generó en cada año?**")
+        with st.expander("Ver la consulta SQL"):
+            st.code(SQL_QUERIES[8], language="sql")
         df8 = q.q8_region_lider_por_anio(engine, anio_min, min(anio_max, 2025))
         if df8.empty:
             st.info("No hay datos para ese rango.")
@@ -614,6 +774,8 @@ with tab_dash:
 
     with sub_tabs[8]:
         st.markdown("**9. ¿Cuál es la central con mayor energía generada acumulada de cada región?**")
+        with st.expander("Ver la consulta SQL"):
+            st.code(SQL_QUERIES[9], language="sql")
         df9 = q.q9_central_lider_por_region(engine, anio_min, anio_max, regiones=regiones_arg)
         if df9.empty:
             st.info("No hay datos para esos filtros.")
